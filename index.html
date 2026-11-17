@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lector Data Matrix</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f3f4f2; --panel:#fff; --ink:#15181a; --muted:#5e666c; --line:#dde1df;
+  --acc:#0b7a5c; --acc-ink:#fff; --warn:#b4471a; --soft:#e8f3ef; --scan:#19e3a3;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0f1214;--panel:#171b1e;--ink:#e8ecea;--muted:#9aa3a0;--line:#2a3033;--acc:#2fbf8f;--acc-ink:#05140f;--soft:#14261f;--warn:#ff8a5c}
+}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:16px max(3vw,16px);border-bottom:1px solid var(--line);background:var(--panel)}
+h1{font-size:22px;margin:0;font-weight:600;letter-spacing:-.01em}
+h1 small{display:block;font-size:13px;font-weight:400;color:var(--muted)}
+.status{margin-left:auto;font-size:14px;color:var(--muted);display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%;background:#9aa3a0}
+.dot.on{background:var(--acc);box-shadow:0 0 0 4px color-mix(in srgb,var(--acc) 25%,transparent)}
+main{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;padding:20px max(3vw,16px);max-width:1500px;margin:auto}
+@media(max-width:900px){main{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.cam{padding:14px;display:flex;flex-direction:column;gap:12px;align-self:start;position:sticky;top:12px}
+.stage{position:relative;aspect-ratio:16/10;background:#0b0d0e;border-radius:8px;overflow:hidden}
+.stage video,.stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.empty{position:absolute;inset:0;display:grid;place-items:center;color:#9aa3a0;text-align:center;padding:20px;font-size:15px}
+.reticle{position:absolute;inset:22% 30%;border:2px dashed rgba(25,227,163,.55);border-radius:6px;pointer-events:none;display:none}
+.live .reticle{display:block}
+.live .empty{display:none}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button,select,.filebtn{font:inherit;font-size:15px;min-height:42px;padding:0 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button:hover,.filebtn:hover{border-color:var(--acc)}
+button:focus-visible,select:focus-visible,textarea:focus-visible,.filebtn:focus-within{outline:2px solid var(--acc);outline-offset:2px}
+.primary{background:var(--acc);color:var(--acc-ink);border-color:var(--acc);font-weight:600}
+select{flex:1 1 200px;max-width:100%}
+.filebtn{display:inline-flex;align-items:center}
+.filebtn input{display:none}
+label.chk{display:flex;gap:6px;align-items:center;font-size:14px;color:var(--muted)}
+.hint{font-size:13px;color:var(--muted);margin:0}
+.results{padding:14px;display:flex;flex-direction:column;gap:14px}
+.rhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rhead h2{font-size:18px;margin:0 auto 0 0}
+.count{font-family:"IBM Plex Mono",monospace;font-size:14px;color:var(--muted)}
+.list{display:flex;flex-direction:column;gap:14px}
+.none{color:var(--muted);text-align:center;padding:40px 10px;border:1px dashed var(--line);border-radius:10px}
+.code{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.code.flash{animation:fl .9s}
+@keyframes fl{from{background:var(--soft)}to{background:transparent}}
+@media (prefers-reduced-motion:reduce){.code.flash{animation:none}}
+.chead{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;background:var(--soft);font-size:14px}
+.chead b{font-weight:600}
+.tag{font-family:"IBM Plex Mono",monospace;font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);background:var(--panel)}
+.chead .del{margin-left:auto;min-height:32px;padding:0 10px;font-size:13px}
+table{width:100%;border-collapse:collapse}
+td{padding:8px 12px;border-top:1px solid var(--line);vertical-align:middle}
+td.ai{width:1%;white-space:nowrap;font-family:"IBM Plex Mono",monospace;color:var(--muted);font-size:13px}
+td.lbl{width:1%;white-space:nowrap;font-size:14px;color:var(--muted)}
+td.val{font-family:"IBM Plex Mono",monospace;font-size:15px;word-break:break-all}
+td.val em{display:block;font-style:normal;font-family:"IBM Plex Sans";font-size:13px;color:var(--muted)}
+td.btn{width:1%;text-align:right}
+td.btn button{min-height:34px;padding:0 12px;font-size:13px}
+.copied{background:var(--acc)!important;color:var(--acc-ink)!important;border-color:var(--acc)!important}
+.full{padding:10px 12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.full label{font-size:13px;color:var(--muted)}
+textarea{width:100%;min-height:70px;resize:vertical;font:14px/1.45 "IBM Plex Mono",monospace;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row button{min-height:34px;font-size:13px}
+.link{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;border-radius:8px;background:var(--soft);font-size:14px}
+.link a{color:var(--acc);font-weight:600;word-break:break-all}
+.err{color:var(--warn);font-size:14px;margin:0}
+@media(max-width:560px){td.lbl{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Lector Data Matrix <small>Webcam · GS1 / ANMAT · texto y links</small></h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="st">Cargando lector…</span></div>
+</header>
+
+<main>
+  <section class="card cam">
+    <div class="stage" id="stage">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+      <div class="reticle"></div>
+      <div class="empty">Tocá <b>&nbsp;Iniciar cámara&nbsp;</b> y acercá el código a la webcam.</div>
+    </div>
+    <div class="controls">
+      <button class="primary" id="startBtn">Iniciar cámara</button>
+      <select id="camSel" aria-label="Cámara"><option value="">Cámara predeterminada</option></select>
+      <label class="filebtn">Leer desde imagen<input type="file" id="fileIn" accept="image/*" multiple></label>
+    </div>
+    <div class="controls">
+      <label class="chk"><input type="checkbox" id="allFmt"> Leer también QR y otros códigos</label>
+      <label class="chk"><input type="checkbox" id="beep" checked> Sonido al leer</label>
+      <label class="chk"><input type="checkbox" id="mirror"> Espejar vista</label>
+    </div>
+    <p class="hint">Consejo: buena luz, sin reflejos y el código ocupando ~1/3 de la imagen. Si la webcam no enfoca de cerca, alejalo un poco.</p>
+    <p class="err" id="err" hidden></p>
+  </section>
+
+  <section class="card results">
+    <div class="rhead">
+      <h2>Códigos leídos</h2>
+      <span class="count" id="count">0</span>
+      <button id="copyCsv">Copiar todo (CSV)</button>
+      <button id="clearBtn">Limpiar</button>
+    </div>
+    <div class="list" id="list"><div class="none">Todavía no se leyó ningún código.</div></div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/iife/reader/index.js"></script>
+<script>
+{
+const $ = id => document.getElementById(id);
+const video = $('video'), overlay = $('overlay'), ctxO = overlay.getContext('2d');
+const work = document.createElement('canvas'), ctxW = work.getContext('2d', {willReadFrequently:true});
+let stream = null, running = false, busy = false, codes = [], lastSeen = new Map(), seq = 0;
+
+// ---- GS1 Application Identifiers ----
+const AI = {
+  '00':'SSCC (unidad logística)','01':'GTIN','02':'GTIN contenido','10':'Lote','11':'Fecha de fabricación',
+  '12':'Fecha de vencimiento de pago','13':'Fecha de empaque','15':'Consumir preferentemente','16':'Fecha de venta',
+  '17':'Vencimiento','20':'Variante','21':'Nº de serie','22':'Variante de consumo','30':'Cantidad','37':'Cantidad (unidades)',
+  '240':'REF / código adicional','241':'Código del cliente','250':'Serie secundaria','400':'Orden de compra',
+  '410':'Enviar a (GLN)','414':'GLN ubicación','422':'País de origen','7003':'Vencimiento (fecha y hora)',
+  '710':'Código nacional (DE)','711':'Código nacional (FR)','712':'Código nacional (ES)','713':'Código nacional (BR)','714':'Código nacional (PT)'
+};
+const DATE_AI = ['11','12','13','15','16','17'];
+const aiName = a => AI[a] || (/^9\d$/.test(a) ? 'Dato interno' : /^31|^32|^33|^34|^35|^36/.test(a) ? 'Medida' : 'Dato GS1');
+
+function fmtDate(v){
+  if(!/^\d{6}$/.test(v)) return '';
+  const yy=+v.slice(0,2), mm=v.slice(2,4), dd=v.slice(4,6);
+  const yyyy = (yy >= 51 ? 1900 : 2000) + yy;
+  return dd==='00' ? `${mm}/${yyyy}` : `${dd}/${mm}/${yyyy}`;
+}
+
+// Separa "(01)xxx(21)yyy" en campos; también acepta texto crudo con separadores GS
+function parseGS1(text){
+  const out=[];
+  if(/^\(\d{2,4}\)/.test(text)){
+    const re=/\((\d{2,4})\)([^(]*)/g; let m;
+    while((m=re.exec(text))) out.push({ai:m[1], value:m[2].trim()});
+  }
+  return out;
+}
+
+const URL_RE = /\b((?:https?:\/\/|www\.)[^\s<>"'\x1d]+)/gi;
+function findLinks(t){ return [...new Set((t.match(URL_RE)||[]).map(u=>u.startsWith('http')?u:'https://'+u))]; }
+const esc = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// ---- Copiar ----
+async function copyText(text, btn){
+  let ok=false;
+  try{ await navigator.clipboard.writeText(text); ok=true; }
+  catch(e){
+    const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select(); try{ok=document.execCommand('copy');}catch(_){} ta.remove();
+  }
+  if(btn){ const o=btn.textContent; btn.textContent= ok?'¡Copiado!':'Error'; btn.classList.add('copied');
+    setTimeout(()=>{btn.textContent=o;btn.classList.remove('copied')},1200); }
+}
+
+// ---- Sonido ----
+let actx=null;
+function beep(){
+  if(!$('beep').checked) return;
+  try{ actx = actx || new (window.AudioContext||window.webkitAudioContext)();
+    const o=actx.createOscillator(), g=actx.createGain(); o.frequency.value=1250; g.gain.value=.08;
+    o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime+.09);
+  }catch(e){}
+}
+
+// ---- Registro de resultados ----
+function addResult(r){
+  const text = r.text || '';
+  if(!text) return;
+  const now = Date.now();
+  const existing = codes.find(c=>c.text===text);
+  if(existing){
+    if(now - (lastSeen.get(text)||0) > 2500){ existing.count++; existing.time=new Date(); beep(); render(existing.id); }
+    lastSeen.set(text, now); return;
+  }
+  lastSeen.set(text, now);
+  let raw = '';
+  try{ raw = new TextDecoder().decode(r.bytes).replace(/\x1d/g,'<GS>'); }catch(e){ raw = text; }
+  codes.unshift({id:++seq, text, raw, format:r.format, gs1:r.contentType==='GS1' || /^\]d2|^\]Q3/.test(r.symbologyIdentifier||''),
+                 fields:parseGS1(text), links:findLinks(raw+' '+text), time:new Date(), count:1});
+  beep(); render(seq);
+}
+
+function render(flashId){
+  $('count').textContent = codes.length + (codes.length===1?' código':' códigos');
+  if(!codes.length){ $('list').innerHTML='<div class="none">Todavía no se leyó ningún código.</div>'; return; }
+  $('list').innerHTML = codes.map(c=>{
+    const rows = c.fields.length ? c.fields.map((f,i)=>{
+      const d = DATE_AI.includes(f.ai) ? fmtDate(f.value) : '';
+      return `<tr><td class="ai">(${esc(f.ai)})</td><td class="lbl">${esc(aiName(f.ai))}</td>
+        <td class="val">${esc(f.value)}${d?`<em>${d}</em>`:''}</td>
+        <td class="btn"><button data-copy="${c.id}:${i}">Copiar</button></td></tr>`;
+    }).join('') : `<tr><td class="lbl">Texto</td><td class="val" colspan="2">${esc(c.text)}</td>
+        <td class="btn"><button data-copy="${c.id}:all">Copiar</button></td></tr>`;
+    const links = c.links.map(u=>`<div class="link">🔗 <a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a>
+        <button data-link="${esc(u)}">Copiar link</button></div>`).join('');
+    return `<article class="code${c.id===flashId?' flash':''}">
+      <div class="chead"><b>#${c.id}</b><span class="tag">${esc(c.format)}</span>${c.gs1?'<span class="tag">GS1</span>':''}
+        <span>${c.time.toLocaleTimeString('es-AR')}</span>${c.count>1?`<span class="tag">leído ×${c.count}</span>`:''}
+        <button class="del" data-del="${c.id}" aria-label="Eliminar">Quitar</button></div>
+      <table>${rows}</table>
+      <div class="full">
+        <label for="t${c.id}">Contenido completo</label>
+        <textarea id="t${c.id}" readonly>${esc(c.text)}${c.raw && c.raw!==c.text ? '\n\nCrudo: '+esc(c.raw) : ''}</textarea>
+        ${links}
+        <div class="row"><button data-copy="${c.id}:all">Copiar contenido</button>
+          ${c.raw && c.raw!==c.text?`<button data-copy="${c.id}:raw">Copiar crudo</button>`:''}</div>
+      </div></article>`;
+  }).join('');
+}
+
+$('list').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  if(b.dataset.del){ codes = codes.filter(c=>c.id!=b.dataset.del); render(); return; }
+  if(b.dataset.link){ copyText(b.dataset.link, b); return; }
+  if(b.dataset.copy){
+    const [id,k] = b.dataset.copy.split(':'); const c = codes.find(x=>x.id==id); if(!c) return;
+    copyText(k==='all' ? c.text : k==='raw' ? c.raw : c.fields[+k].value, b);
+  }
+});
+$('clearBtn').onclick = ()=>{ codes=[]; lastSeen.clear(); render(); };
+$('copyCsv').onclick = e=>{
+  const q = v => '"'+String(v).replace(/"/g,'""')+'"';
+  const get = (c,a) => (c.fields.find(f=>f.ai===a)||{}).value||'';
+  const lines = [['#','Hora','GTIN (01)','Serie (21)','Lote (10)','Vencimiento (17)','REF (240)','Contenido'].map(q).join(';')]
+    .concat([...codes].reverse().map(c=>[c.id,c.time.toLocaleString('es-AR'),get(c,'01'),get(c,'21'),get(c,'10'),
+      fmtDate(get(c,'17'))||get(c,'17'),get(c,'240'),c.text].map(q).join(';')));
+  copyText(lines.join('\n'), e.currentTarget);
+};
+
+// ---- Decodificación ----
+function opts(){
+  return { formats: $('allFmt').checked ? [] : ['DataMatrix'], tryHarder:true, tryRotate:true, tryInvert:true,
+           tryDownscale:true, maxNumberOfSymbols:10 };
+}
+async function decode(imageData){
+  const res = await ZXingWASM.readBarcodes(imageData, opts());
+  return res.filter(r=>r.isValid);
+}
+
+function drawBoxes(res){
+  const w=overlay.clientWidth, h=overlay.clientHeight; overlay.width=w; overlay.height=h;
+  ctxO.clearRect(0,0,w,h);
+  if(!res.length || !video.videoWidth) return;
+  const s=Math.min(w/video.videoWidth, h/video.videoHeight), ox=(w-video.videoWidth*s)/2, oy=(h-video.videoHeight*s)/2;
+  const mir = $('mirror').checked;
+  ctxO.lineWidth=4; ctxO.strokeStyle='#19e3a3'; ctxO.fillStyle='rgba(25,227,163,.18)';
+  for(const r of res){
+    const p=r.position, pts=[p.topLeft,p.topRight,p.bottomRight,p.bottomLeft];
+    ctxO.beginPath();
+    pts.forEach((pt,i)=>{ let x=ox+pt.x*s; if(mir) x=w-x; const y=oy+pt.y*s; i?ctxO.lineTo(x,y):ctxO.moveTo(x,y); });
+    ctxO.closePath(); ctxO.fill(); ctxO.stroke();
+  }
+}
+
+async function loop(){
+  if(!running) return;
+  if(!busy && video.readyState>=2){
+    busy=true;
+    try{
+      work.width=video.videoWidth; work.height=video.videoHeight;
+      ctxW.drawImage(video,0,0);
+      const res = await decode(ctxW.getImageData(0,0,work.width,work.height));
+      drawBoxes(res); res.forEach(addResult);
+    }catch(e){ console.error(e); }
+    busy=false;
+  }
+  setTimeout(loop, 120);
+}
+
+// ---- Cámara ----
+async function listCams(){
+  try{
+    const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
+    const cur=$('camSel').value;
+    $('camSel').innerHTML='<option value="">Cámara predeterminada</option>'+devs.map((d,i)=>
+      `<option value="${esc(d.deviceId)}">${esc(d.label||'Cámara '+(i+1))}</option>`).join('');
+    $('camSel').value=cur;
+  }catch(e){}
+}
+function setStatus(t,on){ $('st').textContent=t; $('dot').classList.toggle('on',!!on); }
+function showErr(t){ $('err').textContent=t; $('err').hidden=!t; }
+
+async function start(){
+  showErr('');
+  if(!navigator.mediaDevices?.getUserMedia){ showErr('Este navegador no permite usar la cámara aquí. Abrí la página por https:// o localhost, en Chrome o Edge.'); return; }
+  stop();
+  const id=$('camSel').value;
+  const v={width:{ideal:1920},height:{ideal:1080},focusMode:'continuous'};
+  if(id) v.deviceId={exact:id};
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({video:v,audio:false});
+    video.srcObject=stream; await video.play();
+    $('stage').classList.add('live'); running=true; $('startBtn').textContent='Detener cámara';
+    const st=stream.getVideoTracks()[0].getSettings();
+    setStatus(`Escaneando · ${st.width||'?'}×${st.height||'?'}`, true);
+    listCams(); loop();
+  }catch(e){
+    const m = e.name==='NotAllowedError' ? 'Permiso de cámara denegado. Habilitalo desde el candado de la barra de direcciones.'
+            : e.name==='NotFoundError' ? 'No se encontró ninguna cámara conectada.'
+            : e.name==='NotReadableError' ? 'La cámara está siendo usada por otra aplicación (Zoom, Teams, etc.).'
+            : 'No se pudo iniciar la cámara: '+e.message;
+    showErr(m); setStatus('Cámara apagada');
+  }
+}
+function stop(){
+  running=false;
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  video.srcObject=null; $('stage').classList.remove('live'); $('startBtn').textContent='Iniciar cámara';
+  ctxO.clearRect(0,0,overlay.width,overlay.height); setStatus('Cámara apagada');
+}
+$('startBtn').onclick = ()=> running ? stop() : start();
+$('camSel').onchange = ()=>{ if(running) start(); };
+$('mirror').onchange = ()=>{ video.style.transform = $('mirror').checked ? 'scaleX(-1)' : ''; };
+
+// ---- Desde imagen ----
+$('fileIn').onchange = async e=>{
+  showErr('');
+  for(const f of e.target.files){
+    try{
+      const res = await ZXingWASM.readBarcodes(f, opts());
+      const ok = res.filter(r=>r.isValid);
+      if(!ok.length) showErr(`No se encontró ningún código en "${f.name}".`);
+      ok.forEach(r=>{ lastSeen.delete(r.text); addResult(r); });
+    }catch(err){ showErr('Error leyendo la imagen: '+err.message); }
+  }
+  e.target.value='';
+};
+
+// ---- Inicio ----
+if(typeof ZXingWASM==='undefined'){
+  setStatus('Sin lector'); showErr('No se pudo cargar la librería de lectura (zxing-wasm). Revisá la conexión a internet.');
+}else{
+  ZXingWASM.prepareZXingModule({fireImmediately:true})
+    .then(()=>setStatus('Listo · cámara apagada'))
+    .catch(()=>{ setStatus('Sin lector'); showErr('No se pudo cargar el módulo WASM del lector.'); });
+  listCams();
+}
+}
+</script>
+</body>
+</html>
