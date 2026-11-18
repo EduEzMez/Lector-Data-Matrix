@@ -18,8 +18,8 @@
 *{box-sizing:border-box;min-width:0}
 [hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "IBM Plex Sans",system-ui,sans-serif}
-header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:16px max(3vw,16px);border-bottom:1px solid var(--line);background:var(--panel)}
-h1{font-size:22px;margin:0;font-weight:600;letter-spacing:-.01em}
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:6px max(3vw,16px);border-bottom:1px solid var(--line);background:var(--panel)}
+h1{font-size:18px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em}
 h1 small{display:block;font-size:13px;font-weight:400;color:var(--muted)}
 .status{margin-left:auto;font-size:14px;color:var(--muted);display:flex;align-items:center;gap:8px}
 .dot{width:10px;height:10px;border-radius:50%;background:#9aa3a0}
@@ -78,6 +78,16 @@ textarea{width:100%;min-height:70px;resize:vertical;font:14px/1.45 "IBM Plex Mon
 .ver{text-align:center;font-size:13px;color:var(--muted);padding:6px 16px 20px}
 .bad{margin:0;padding:10px 12px;border-radius:8px;background:color-mix(in srgb,#ff9a3c 16%,transparent);border:1px solid #ff9a3c;font-size:14px}
 .tools{display:grid;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
+.tools summary{cursor:pointer;font-weight:600;font-size:14px;min-height:28px}
+#ctrlList{display:grid;gap:6px;margin-top:6px}
+.ctrl{display:grid;grid-template-columns:9em auto minmax(0,1fr) 4.5em;gap:8px;align-items:center;font-size:14px}
+.ctrl .mono{text-align:right}
+.mono{font-family:"IBM Plex Mono",monospace;font-size:12px}
+.meter{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;font-size:14px}
+.bar{position:relative;height:12px;border-radius:6px;background:var(--line);overflow:hidden}
+.bar i{position:absolute;inset:0 auto 0 0;width:0;background:var(--acc);transition:width .15s}
+.bar b{position:absolute;top:0;bottom:0;width:2px;background:var(--ink);left:0}
+@media(max-width:560px){.ctrl{grid-template-columns:7em auto minmax(0,1fr)}.ctrl .mono{display:none}}
 .tools label{display:flex;gap:10px;align-items:center;font-size:14px;flex-wrap:wrap}
 .tools input[type=range]{flex:1 1 180px;accent-color:var(--acc)}
 #rate{font-family:"IBM Plex Mono",monospace;font-size:12px}
@@ -86,7 +96,7 @@ textarea{width:100%;min-height:70px;resize:vertical;font:14px/1.45 "IBM Plex Mon
 </head>
 <body>
 <header>
-  <h1>Lector Data Matrix <small>Webcam · GS1 / ANMAT · texto y links</small></h1>
+  <h1>Lector Data Matrix</h1>
   <div class="status"><span class="dot" id="dot"></span><span id="st">Cargando lector…</span><span id="rate"></span></div>
 </header>
 
@@ -108,14 +118,19 @@ textarea{width:100%;min-height:70px;resize:vertical;font:14px/1.45 "IBM Plex Mon
       <label class="chk"><input type="checkbox" id="beep" checked> Sonido al leer</label>
       <label class="chk"><input type="checkbox" id="mirror"> Espejar vista</label>
     </div>
-    <div class="tools" id="camTools" hidden>
-      <label id="focusBox" hidden><input type="checkbox" id="autoFocus" checked> Autofoco
-        <input type="range" id="focus" aria-label="Enfoque manual"></label>
-      <label id="zoomBox" hidden>Zoom <input type="range" id="zoom" aria-label="Zoom"></label>
-      <p class="hint" id="focusInfo"></p>
+    <div class="meter" id="meterBox" hidden>
+      <span>Nitidez del recuadro</span>
+      <div class="bar"><i id="sharpBar"></i><b id="sharpBest"></b></div>
+      <span id="sharpTxt" class="mono"></span>
     </div>
+    <details class="tools" id="camTools" hidden>
+      <summary>Ajustes de la webcam</summary>
+      <div id="ctrlList"></div>
+      <div class="row"><button id="resetCtrl" type="button">Volver a automático</button></div>
+      <p class="hint" id="focusInfo"></p>
+    </details>
     <p class="bad" id="bad" hidden><b>Código detectado pero ilegible.</b> Se ve el Data Matrix (recuadro naranja) pero tiene demasiados módulos dañados: probá inclinar para sacar reflejos, acercar o alejar un poco, o más luz. Si nunca lo lee, el problema es la impresión de la etiqueta.</p>
-    <p class="hint">Consejo: centrá el código en el recuadro punteado, con buena luz y sin reflejos, ocupando ~1/3 de la imagen. Si la webcam no enfoca de cerca, alejalo un poco.</p>
+    <p class="hint">Consejo: centrá el código en el recuadro punteado, con buena luz y sin reflejos, ocupando ~1/3 de la imagen. Mové el código hasta que la barra de nitidez llegue al máximo: esa es la distancia ideal para tu webcam.</p>
     <p class="err" id="err" hidden></p>
   </section>
 
@@ -134,7 +149,7 @@ textarea{width:100%;min-height:70px;resize:vertical;font:14px/1.45 "IBM Plex Mon
 <script src="https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/iife/reader/index.js"></script>
 <script>
 {
-const APP_VERSION = 'v4 · 18/11/2026';
+const APP_VERSION = 'v6 · 18/11/2026';
 const $ = id => document.getElementById(id);
 $('ver').textContent = APP_VERSION;
 const video = $('video'), overlay = $('overlay'), ctxO = overlay.getContext('2d');
@@ -336,48 +351,108 @@ function tick(){
   const next = ()=> video.requestVideoFrameCallback ? video.requestVideoFrameCallback(tick) : requestAnimationFrame(tick);
   if(busy || video.readyState<2){ next(); return; }
   busy=true;
+  const t0=performance.now();
+  try{ measureSharp(); }catch(e){}
   scanFrame().catch(e=>console.error(e)).finally(()=>{
     busy=false;
     const now=performance.now();
+    msAvg = msAvg ? msAvg*.8+(now-t0)*.2 : now-t0;
     if(now-tStat>1000){
-      $('rate').textContent = Math.round(attempts*1000/(now-tStat))+' lecturas/s';
+      const fps = stream?.getVideoTracks()[0]?.getSettings().frameRate;
+      $('rate').textContent = Math.round(attempts*1000/(now-tStat))+' lecturas/s · '+Math.round(msAvg)+' ms'+(fps?' · cámara '+Math.round(fps)+' fps':'');
       attempts=0; tStat=now;
     }
     next();
   });
 }
-function loop(){ stratIdx=0; badFirst=0; badLast=0; errCheckAt=0; tStat=performance.now(); attempts=0; tick(); }
+let msAvg=0;
+function loop(){ msAvg=0; sharpHist=[]; $('meterBox').hidden=false; stratIdx=0; badFirst=0; badLast=0; errCheckAt=0; tStat=performance.now(); attempts=0; tick(); }
 
-// ---- Enfoque y zoom (si la webcam lo permite) ----
+// ---- Ajustes de webcam (foco, exposición, etc. según lo que exponga el driver) ----
 const withTimeout = (p, ms=1500) => Promise.race([p, new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]);
-async function setupTrackControls(track){
-  $('camTools').hidden=true; $('focusBox').hidden=true; $('zoomBox').hidden=true;
-  if(!track.getCapabilities) return;
-  const cap = track.getCapabilities(), set = track.getSettings();
-  // Pedir autofoco continuo explícito (muchas webcams arrancan en foco fijo)
-  if(cap.focusMode && cap.focusMode.includes('continuous')){
-    try{ await withTimeout(track.applyConstraints({advanced:[{focusMode:'continuous'}]})); }catch(e){}
-  }
-  if(cap.focusDistance && cap.focusMode && cap.focusMode.includes('manual')){
-    const f=$('focus'); f.min=cap.focusDistance.min; f.max=cap.focusDistance.max; f.step=cap.focusDistance.step||0.01;
-    f.value = set.focusDistance ?? cap.focusDistance.min;
-    $('focusBox').hidden=false; $('camTools').hidden=false; $('autoFocus').checked=true; f.disabled=true;
-  }
-  if(cap.zoom && cap.zoom.max>cap.zoom.min){
-    const z=$('zoom'); z.min=cap.zoom.min; z.max=cap.zoom.max; z.step=cap.zoom.step||0.1; z.value=set.zoom ?? cap.zoom.min;
-    $('zoomBox').hidden=false; $('camTools').hidden=false;
-  }
-  $('focusInfo').textContent = cap.focusMode ? 'Modos de foco: '+cap.focusMode.join(', ') : 'Esta webcam no informa control de foco (suele ser foco fijo).';
-}
+const CTRLS = [
+  {k:'focusDistance',        label:'Enfoque',       mode:'focusMode'},
+  {k:'exposureTime',         label:'Exposición',    mode:'exposureMode'},
+  {k:'exposureCompensation', label:'Comp. exposición'},
+  {k:'brightness',           label:'Brillo'},
+  {k:'contrast',             label:'Contraste'},
+  {k:'sharpness',            label:'Nitidez cámara'},
+  {k:'zoom',                 label:'Zoom'},
+];
 const curTrack = ()=> stream && stream.getVideoTracks()[0];
-$('autoFocus').onchange = async ()=>{
-  const t=curTrack(); if(!t) return; const auto=$('autoFocus').checked; $('focus').disabled=auto;
-  try{ await t.applyConstraints({advanced:[ auto ? {focusMode:'continuous'} : {focusMode:'manual', focusDistance:+$('focus').value} ]}); }catch(e){}
-};
-$('focus').oninput = async ()=>{ const t=curTrack(); if(!t) return;
-  try{ await t.applyConstraints({advanced:[{focusMode:'manual', focusDistance:+$('focus').value}]}); }catch(e){} };
-$('zoom').oninput = async ()=>{ const t=curTrack(); if(!t) return;
-  try{ await t.applyConstraints({advanced:[{zoom:+$('zoom').value}]}); }catch(e){} };
+const storeKey = ()=> 'dmCam:'+(curTrack()?.getSettings().deviceId||'def');
+function loadCfg(){ try{ return JSON.parse(localStorage.getItem(storeKey())||'{}'); }catch(e){ return {}; } }
+function saveCfg(c){ try{ localStorage.setItem(storeKey(), JSON.stringify(c)); }catch(e){} }
+async function apply(c){ const t=curTrack(); if(!t) return; try{ await withTimeout(t.applyConstraints({advanced:[c]})); }catch(e){ console.warn('applyConstraints',c,e); } }
+
+async function setupTrackControls(track){
+  $('camTools').hidden=true; $('ctrlList').innerHTML='';
+  if(!track.getCapabilities){ $('focusInfo').textContent='El navegador no permite ajustar esta webcam.'; return; }
+  const cap = track.getCapabilities(), set = track.getSettings(), cfg = loadCfg();
+  const rows=[];
+  for(const c of CTRLS){
+    const r=cap[c.k]; if(!r || !(r.max>r.min)) continue;
+    const hasAuto = c.mode && cap[c.mode] && cap[c.mode].includes('continuous') && cap[c.mode].includes('manual');
+    const saved = cfg[c.k];
+    const auto = hasAuto ? !(saved && saved.manual) : false;
+    const val = saved ? saved.v : (set[c.k] ?? r.min);
+    rows.push(`<div class="ctrl" data-k="${c.k}">
+      <span>${c.label}</span>
+      ${hasAuto?`<label class="chk"><input type="checkbox" data-auto="${c.k}" ${auto?'checked':''}> auto</label>`:'<span></span>'}
+      <input type="range" data-v="${c.k}" min="${r.min}" max="${r.max}" step="${r.step||((r.max-r.min)/100)}" value="${val}" ${auto?'disabled':''} aria-label="${c.label}">
+      <span class="mono" id="v_${c.k}">${(+val).toFixed(r.step>=1?0:2)}</span></div>`);
+  }
+  $('ctrlList').innerHTML = rows.join('') || '<p class="hint">Esta webcam no expone ajustes al navegador.</p>';
+  $('camTools').hidden=false;
+  // Aplicar: lo guardado, o autofoco/autoexposición continuos
+  for(const c of CTRLS){
+    if(!cap[c.k]) continue; const sv=cfg[c.k];
+    if(c.mode && cap[c.mode]){
+      if(sv && sv.manual) await apply({[c.mode]:'manual',[c.k]:sv.v});
+      else if(cap[c.mode].includes('continuous')) await apply({[c.mode]:'continuous'});
+    } else if(sv) await apply({[c.k]:sv.v});
+  }
+  const modes=[]; if(cap.focusMode) modes.push('foco: '+cap.focusMode.join('/')); if(cap.exposureMode) modes.push('exposición: '+cap.exposureMode.join('/'));
+  $('focusInfo').textContent = (cap.focusDistance ? '' : 'Esta webcam no permite controlar el foco (foco fijo): buscá la distancia con mejor nitidez. ') + modes.join(' · ');
+}
+$('ctrlList').addEventListener('input', e=>{
+  const k=e.target.dataset.v; if(!k) return;
+  const c=CTRLS.find(x=>x.k===k), v=+e.target.value, cfg=loadCfg();
+  $('v_'+k).textContent = v.toFixed(Number(e.target.step)>=1?0:2);
+  cfg[k]={v, manual:true}; saveCfg(cfg);
+  apply(c.mode ? {[c.mode]:'manual',[k]:v} : {[k]:v});
+});
+$('ctrlList').addEventListener('change', e=>{
+  const k=e.target.dataset.auto; if(!k) return;
+  const c=CTRLS.find(x=>x.k===k), auto=e.target.checked, sl=document.querySelector(`[data-v="${k}"]`), cfg=loadCfg();
+  sl.disabled=auto;
+  if(auto){ delete cfg[k]; apply({[c.mode]:'continuous'}); }
+  else { cfg[k]={v:+sl.value, manual:true}; apply({[c.mode]:'manual',[k]:+sl.value}); }
+  saveCfg(cfg);
+});
+$('resetCtrl').onclick = async ()=>{ saveCfg({}); const t=curTrack(); if(t) await setupTrackControls(t); };
+
+// ---- Medidor de nitidez (varianza del laplaciano en el centro del recuadro) ----
+const sc=document.createElement('canvas'), scx=sc.getContext('2d',{willReadFrequently:true});
+let sharpAt=0, sharpHist=[];
+function measureSharp(){
+  const now=performance.now(); if(now-sharpAt<200 || !video.videoWidth) return; sharpAt=now;
+  const W=video.videoWidth, H=video.videoHeight, side=Math.round(Math.min(W,H)*.45), S=240;
+  sc.width=S; sc.height=S;
+  scx.drawImage(video,(W-side)/2,(H-side)/2,side,side,0,0,S,S);
+  const d=scx.getImageData(0,0,S,S).data, g=new Float32Array(S*S);
+  for(let i=0;i<S*S;i++) g[i]=.299*d[i*4]+.587*d[i*4+1]+.114*d[i*4+2];
+  let sum=0,sum2=0,n=0;
+  for(let y=1;y<S-1;y++) for(let x=1;x<S-1;x++){
+    const i=y*S+x, l=4*g[i]-g[i-1]-g[i+1]-g[i-S]-g[i+S]; sum+=l; sum2+=l*l; n++;
+  }
+  const v=Math.sqrt(Math.max(0,sum2/n-(sum/n)**2));
+  sharpHist.push([now,v]); sharpHist=sharpHist.filter(h=>now-h[0]<15000);
+  const best=Math.max(...sharpHist.map(h=>h[1]),1);
+  $('sharpBar').style.width=Math.min(100,v/best*100)+'%';
+  $('sharpBest').style.left='calc(100% - 2px)';
+  $('sharpTxt').textContent=Math.round(v)+' / mejor '+Math.round(best);
+}
 
 // ---- Cámara ----
 async function listCams(){
@@ -434,7 +509,7 @@ function stop(){
   running=false;
   if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
   video.srcObject=null; $('stage').classList.remove('live'); $('startBtn').textContent='Iniciar cámara';
-  ctxO.clearRect(0,0,overlay.width,overlay.height); setStatus('Cámara apagada'); hintBad(false); $('rate').textContent=''; $('camTools').hidden=true;
+  ctxO.clearRect(0,0,overlay.width,overlay.height); setStatus('Cámara apagada'); hintBad(false); $('rate').textContent=''; $('camTools').hidden=true; $('meterBox').hidden=true;
 }
 $('startBtn').onclick = ()=> running ? stop() : start();
 $('camSel').onchange = ()=>{ if(running) start(); };
