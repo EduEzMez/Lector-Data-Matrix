@@ -260,18 +260,20 @@ $('copyCsv').onclick = e=>{
 // Se alternan estrategias cuadro a cuadro: con códigos mal impresos, cada variante
 // (recorte, binarizador, escala) le da al lector otra chance distinta.
 const STRATS = [
-  {crop:true,  binarizer:'LocalAverage',    tryDownscale:true},
-  {crop:true,  binarizer:'GlobalHistogram', tryDownscale:true},
-  {crop:true,  binarizer:'LocalAverage',    tryDownscale:false},
-  {crop:false, binarizer:'LocalAverage',    tryDownscale:true, tryInvert:true},
+  // E0 = configuración original de la v1 (la que leía estas etiquetas), se usa la mitad de los cuadros
+  {crop:false, tryRotate:true, tryInvert:true,  tryDownscale:true},
+  {crop:false, tryRotate:true, tryInvert:false, tryDownscale:true, binarizer:'GlobalHistogram'},
+  {crop:false, tryRotate:true, tryInvert:true,  tryDownscale:true},
+  {crop:true,  tryRotate:true, tryInvert:false, tryDownscale:true},
 ];
-let stratIdx=0, attempts=0, tStat=performance.now(), badFirst=0, badLast=0, okAt=0;
+let stratIdx=0, attempts=0, tStat=performance.now(), badFirst=0, badLast=0, okAt=0, errCheckAt=0;
 const CROP = {x:.15, y:.05, w:.7, h:.9};   // zona central = recuadro punteado
 
 function opts(extra={}){
-  // tryRotate no hace falta para Data Matrix (el detector lo lee en cualquier ángulo) y cuesta tiempo
-  return { formats: $('allFmt').checked ? [] : ['DataMatrix'], tryHarder:true, tryRotate:false,
-           tryInvert:false, tryDownscale:true, maxNumberOfSymbols:4, returnErrors:true, ...extra };
+  // Sin returnErrors: con esa opción el lector se conforma con el primer intento fallido y deja
+  // de probar otras escalas, que es justo lo que salva a las etiquetas mal impresas.
+  return { formats: $('allFmt').checked ? [] : ['DataMatrix'], tryHarder:true, tryRotate:true,
+           tryInvert:true, tryDownscale:true, maxNumberOfSymbols:10, ...extra };
 }
 
 function drawBoxes(res, offX, offY){
@@ -303,16 +305,24 @@ async function scanFrame(){
   if(work.width!==sw || work.height!==sh){ work.width=sw; work.height=sh; }
   ctxW.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
   const {crop, ...o} = st;
-  const res = await ZXingWASM.readBarcodes(ctxW.getImageData(0,0,sw,sh), opts(o));
+  const img = ctxW.getImageData(0,0,sw,sh);
+  const res = await ZXingWASM.readBarcodes(img, opts(o));
   attempts++;
   const ok = res.filter(r=>r.isValid);
-  const bad = res.filter(r=>!r.isValid && /Checksum|Format/.test(r.error||''));
+  let bad = [];
   const now=performance.now();
+  // Solo para el aviso naranja: cada ~0,8 s, si no se leyó nada, se pregunta si hay un código visible pero dañado
+  if(!ok.length && now-errCheckAt>800){
+    errCheckAt=now;
+    const er = await ZXingWASM.readBarcodes(img, opts({...o, returnErrors:true}));
+    bad = er.filter(r=>!r.isValid && /Checksum|Format/.test(r.error||''));
+  }
   if(ok.length){ okAt=now; badFirst=0; }
   else if(bad.length){ badLast=now; if(!badFirst) badFirst=now; }
-  if(badFirst && now-badLast>1500) badFirst=0;          // el código ya no está a la vista
-  hintBad(!!badFirst && now-badFirst>2000 && now-okAt>2000);
-  if(ok.length || bad.length || stratIdx%STRATS.length===0) drawBoxes(ok.length?ok:bad, sx, sy);
+  if(badFirst && now-badLast>2500) badFirst=0;
+  hintBad(!!badFirst && now-badFirst>2500 && now-okAt>2500);
+  if(ok.length || bad.length) drawBoxes(ok.length?ok:bad, sx, sy);
+  else if(now-badLast>900 && now-okAt>900) drawBoxes([],0,0);
   ok.forEach(addResult);
 }
 
@@ -331,7 +341,7 @@ function tick(){
     next();
   });
 }
-function loop(){ stratIdx=0; badFirst=0; badLast=0; tStat=performance.now(); attempts=0; tick(); }
+function loop(){ stratIdx=0; badFirst=0; badLast=0; errCheckAt=0; tStat=performance.now(); attempts=0; tick(); }
 
 // ---- Enfoque y zoom (si la webcam lo permite) ----
 async function setupTrackControls(track){
@@ -343,96 +353,4 @@ async function setupTrackControls(track){
     try{ await track.applyConstraints({advanced:[{focusMode:'continuous'}]}); }catch(e){}
   }
   if(cap.focusDistance && cap.focusMode && cap.focusMode.includes('manual')){
-    const f=$('focus'); f.min=cap.focusDistance.min; f.max=cap.focusDistance.max; f.step=cap.focusDistance.step||0.01;
-    f.value = set.focusDistance ?? cap.focusDistance.min;
-    $('focusBox').hidden=false; $('camTools').hidden=false; $('autoFocus').checked=true; f.disabled=true;
-  }
-  if(cap.zoom && cap.zoom.max>cap.zoom.min){
-    const z=$('zoom'); z.min=cap.zoom.min; z.max=cap.zoom.max; z.step=cap.zoom.step||0.1; z.value=set.zoom ?? cap.zoom.min;
-    $('zoomBox').hidden=false; $('camTools').hidden=false;
-  }
-  $('focusInfo').textContent = cap.focusMode ? 'Modos de foco: '+cap.focusMode.join(', ') : 'Esta webcam no informa control de foco (suele ser foco fijo).';
-}
-const curTrack = ()=> stream && stream.getVideoTracks()[0];
-$('autoFocus').onchange = async ()=>{
-  const t=curTrack(); if(!t) return; const auto=$('autoFocus').checked; $('focus').disabled=auto;
-  try{ await t.applyConstraints({advanced:[ auto ? {focusMode:'continuous'} : {focusMode:'manual', focusDistance:+$('focus').value} ]}); }catch(e){}
-};
-$('focus').oninput = async ()=>{ const t=curTrack(); if(!t) return;
-  try{ await t.applyConstraints({advanced:[{focusMode:'manual', focusDistance:+$('focus').value}]}); }catch(e){} };
-$('zoom').oninput = async ()=>{ const t=curTrack(); if(!t) return;
-  try{ await t.applyConstraints({advanced:[{zoom:+$('zoom').value}]}); }catch(e){} };
-
-// ---- Cámara ----
-async function listCams(){
-  try{
-    const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
-    const cur=$('camSel').value;
-    $('camSel').innerHTML='<option value="">Cámara predeterminada</option>'+devs.map((d,i)=>
-      `<option value="${esc(d.deviceId)}">${esc(d.label||'Cámara '+(i+1))}</option>`).join('');
-    $('camSel').value=cur;
-  }catch(e){}
-}
-function setStatus(t,on){ $('st').textContent=t; $('dot').classList.toggle('on',!!on); }
-function showErr(t){ $('err').textContent=t; $('err').hidden=!t; }
-
-async function start(){
-  showErr('');
-  if(!navigator.mediaDevices?.getUserMedia){ showErr('Este navegador no permite usar la cámara aquí. Abrí la página por https:// o localhost, en Chrome o Edge.'); return; }
-  stop();
-  const id=$('camSel').value;
-  const v={width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30}};
-  if(id) v.deviceId={exact:id};
-  try{
-    stream = await navigator.mediaDevices.getUserMedia({video:v,audio:false});
-    video.srcObject=stream; await video.play();
-    $('stage').classList.add('live'); running=true; $('startBtn').textContent='Detener cámara';
-    const st=stream.getVideoTracks()[0].getSettings();
-    setStatus(`Escaneando · ${st.width||'?'}×${st.height||'?'}`, true);
-    await setupTrackControls(stream.getVideoTracks()[0]);
-    listCams(); loop();
-  }catch(e){
-    const m = e.name==='NotAllowedError' ? 'Permiso de cámara denegado. Habilitalo desde el candado de la barra de direcciones.'
-            : e.name==='NotFoundError' ? 'No se encontró ninguna cámara conectada.'
-            : e.name==='NotReadableError' ? 'La cámara está siendo usada por otra aplicación (Zoom, Teams, etc.).'
-            : 'No se pudo iniciar la cámara: '+e.message;
-    showErr(m); setStatus('Cámara apagada');
-  }
-}
-function stop(){
-  running=false;
-  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
-  video.srcObject=null; $('stage').classList.remove('live'); $('startBtn').textContent='Iniciar cámara';
-  ctxO.clearRect(0,0,overlay.width,overlay.height); setStatus('Cámara apagada'); hintBad(false); $('rate').textContent=''; $('camTools').hidden=true;
-}
-$('startBtn').onclick = ()=> running ? stop() : start();
-$('camSel').onchange = ()=>{ if(running) start(); };
-$('mirror').onchange = ()=>{ video.style.transform = $('mirror').checked ? 'scaleX(-1)' : ''; };
-
-// ---- Desde imagen ----
-$('fileIn').onchange = async e=>{
-  showErr('');
-  for(const f of e.target.files){
-    try{
-      const res = await ZXingWASM.readBarcodes(f, opts({tryInvert:true}));
-      const ok = res.filter(r=>r.isValid);
-      if(!ok.length) showErr(res.length ? `Se detectó un código en "${f.name}" pero está dañado o mal impreso y no se pudo decodificar.` : `No se encontró ningún código en "${f.name}".`);
-      ok.forEach(r=>{ lastSeen.delete(r.text); addResult(r); });
-    }catch(err){ showErr('Error leyendo la imagen: '+err.message); }
-  }
-  e.target.value='';
-};
-
-// ---- Inicio ----
-if(typeof ZXingWASM==='undefined'){
-  setStatus('Sin lector'); showErr('No se pudo cargar la librería de lectura (zxing-wasm). Revisá la conexión a internet.');
-}else{
-  ZXingWASM.prepareZXingModule({fireImmediately:true})
-    .then(()=>setStatus('Listo · cámara apagada'))
-    .catch(()=>{ setStatus('Sin lector'); showErr('No se pudo cargar el módulo WASM del lector.'); });
-  listCams();
-}
-}
-</script>
-</body>
-</html>
+    const f=$('focus'); f.min=cap.focusDistance.min; f.max=cap.focusDistance.max; f.step=cap.focusDista
