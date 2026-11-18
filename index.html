@@ -16,9 +16,8 @@
 }
 *{box-sizing:border-box;min-width:0}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "IBM Plex Sans",system-ui,sans-serif}
-header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:16px max(3vw,16px);border-bottom:1px solid var(--line);background:var(--panel)}
-h1{font-size:22px;margin:0;font-weight:600;letter-spacing:-.01em}
-h1 small{display:block;font-size:13px;font-weight:400;color:var(--muted)}
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:6px max(3vw,16px);border-bottom:1px solid var(--line);background:var(--panel)}
+h1{font-size:18px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em}
 .status{margin-left:auto;font-size:14px;color:var(--muted);display:flex;align-items:center;gap:8px}
 .dot{width:10px;height:10px;border-radius:50%;background:#9aa3a0}
 .dot.on{background:var(--acc);box-shadow:0 0 0 4px color-mix(in srgb,var(--acc) 25%,transparent)}
@@ -73,12 +72,13 @@ textarea{width:100%;min-height:70px;resize:vertical;font:14px/1.45 "IBM Plex Mon
 .link{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;border-radius:8px;background:var(--soft);font-size:14px}
 .link a{color:var(--acc);font-weight:600;word-break:break-all}
 .err{color:var(--warn);font-size:14px;margin:0}
+.ver{text-align:center;font-size:13px;color:var(--muted);padding:6px 16px 20px}
 @media(max-width:560px){td.lbl{display:none}}
 </style>
 </head>
 <body>
 <header>
-  <h1>Lector Data Matrix <small>Webcam · GS1 / ANMAT · texto y links</small></h1>
+  <h1>Lector Data Matrix</h1>
   <div class="status"><span class="dot" id="dot"></span><span id="st">Cargando lector…</span></div>
 </header>
 
@@ -114,6 +114,7 @@ textarea{width:100%;min-height:70px;resize:vertical;font:14px/1.45 "IBM Plex Mon
     <div class="list" id="list"><div class="none">Todavía no se leyó ningún código.</div></div>
   </section>
 </main>
+<footer class="ver">Lector Data Matrix · v1.1 · 18/11/2026</footer>
 
 <script src="https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/iife/reader/index.js"></script>
 <script>
