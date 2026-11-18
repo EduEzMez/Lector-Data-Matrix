@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lector Data Matrix</title>
+<!-- Versión: actualizar APP_VERSION en cada modificación -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -74,6 +75,7 @@ textarea{width:100%;min-height:70px;resize:vertical;font:14px/1.45 "IBM Plex Mon
 .link{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;border-radius:8px;background:var(--soft);font-size:14px}
 .link a{color:var(--acc);font-weight:600;word-break:break-all}
 .err{color:var(--warn);font-size:14px;margin:0}
+.ver{text-align:center;font-size:13px;color:var(--muted);padding:6px 16px 20px}
 .bad{margin:0;padding:10px 12px;border-radius:8px;background:color-mix(in srgb,#ff9a3c 16%,transparent);border:1px solid #ff9a3c;font-size:14px}
 .tools{display:grid;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
 .tools label{display:flex;gap:10px;align-items:center;font-size:14px;flex-wrap:wrap}
@@ -127,11 +129,14 @@ textarea{width:100%;min-height:70px;resize:vertical;font:14px/1.45 "IBM Plex Mon
     <div class="list" id="list"><div class="none">Todavía no se leyó ningún código.</div></div>
   </section>
 </main>
+<footer class="ver">Lector Data Matrix · <span id="ver"></span></footer>
 
 <script src="https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/iife/reader/index.js"></script>
 <script>
 {
+const APP_VERSION = 'v4 · 18/11/2026';
 const $ = id => document.getElementById(id);
+$('ver').textContent = APP_VERSION;
 const video = $('video'), overlay = $('overlay'), ctxO = overlay.getContext('2d');
 const work = document.createElement('canvas'), ctxW = work.getContext('2d', {willReadFrequently:true});
 let stream = null, running = false, busy = false, codes = [], lastSeen = new Map(), seq = 0;
@@ -344,13 +349,122 @@ function tick(){
 function loop(){ stratIdx=0; badFirst=0; badLast=0; errCheckAt=0; tStat=performance.now(); attempts=0; tick(); }
 
 // ---- Enfoque y zoom (si la webcam lo permite) ----
+const withTimeout = (p, ms=1500) => Promise.race([p, new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]);
 async function setupTrackControls(track){
   $('camTools').hidden=true; $('focusBox').hidden=true; $('zoomBox').hidden=true;
   if(!track.getCapabilities) return;
   const cap = track.getCapabilities(), set = track.getSettings();
   // Pedir autofoco continuo explícito (muchas webcams arrancan en foco fijo)
   if(cap.focusMode && cap.focusMode.includes('continuous')){
-    try{ await track.applyConstraints({advanced:[{focusMode:'continuous'}]}); }catch(e){}
+    try{ await withTimeout(track.applyConstraints({advanced:[{focusMode:'continuous'}]})); }catch(e){}
   }
   if(cap.focusDistance && cap.focusMode && cap.focusMode.includes('manual')){
-    const f=$('focus'); f.min=cap.focusDistance.min; f.max=cap.focusDistance.max; f.step=cap.focusDista
+    const f=$('focus'); f.min=cap.focusDistance.min; f.max=cap.focusDistance.max; f.step=cap.focusDistance.step||0.01;
+    f.value = set.focusDistance ?? cap.focusDistance.min;
+    $('focusBox').hidden=false; $('camTools').hidden=false; $('autoFocus').checked=true; f.disabled=true;
+  }
+  if(cap.zoom && cap.zoom.max>cap.zoom.min){
+    const z=$('zoom'); z.min=cap.zoom.min; z.max=cap.zoom.max; z.step=cap.zoom.step||0.1; z.value=set.zoom ?? cap.zoom.min;
+    $('zoomBox').hidden=false; $('camTools').hidden=false;
+  }
+  $('focusInfo').textContent = cap.focusMode ? 'Modos de foco: '+cap.focusMode.join(', ') : 'Esta webcam no informa control de foco (suele ser foco fijo).';
+}
+const curTrack = ()=> stream && stream.getVideoTracks()[0];
+$('autoFocus').onchange = async ()=>{
+  const t=curTrack(); if(!t) return; const auto=$('autoFocus').checked; $('focus').disabled=auto;
+  try{ await t.applyConstraints({advanced:[ auto ? {focusMode:'continuous'} : {focusMode:'manual', focusDistance:+$('focus').value} ]}); }catch(e){}
+};
+$('focus').oninput = async ()=>{ const t=curTrack(); if(!t) return;
+  try{ await t.applyConstraints({advanced:[{focusMode:'manual', focusDistance:+$('focus').value}]}); }catch(e){} };
+$('zoom').oninput = async ()=>{ const t=curTrack(); if(!t) return;
+  try{ await t.applyConstraints({advanced:[{zoom:+$('zoom').value}]}); }catch(e){} };
+
+// ---- Cámara ----
+async function listCams(){
+  try{
+    const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
+    const cur=$('camSel').value;
+    $('camSel').innerHTML='<option value="">Cámara predeterminada</option>'+devs.map((d,i)=>
+      `<option value="${esc(d.deviceId)}">${esc(d.label||'Cámara '+(i+1))}</option>`).join('');
+    $('camSel').value=cur;
+  }catch(e){}
+}
+function setStatus(t,on){ $('st').textContent=t; $('dot').classList.toggle('on',!!on); }
+function showErr(t){ $('err').textContent=t; $('err').hidden=!t; }
+
+async function openCamera(id){
+  // 1º intento: alta resolución. Si la webcam o el driver no lo aceptan, se reintenta con lo mínimo.
+  const tries = [
+    {width:{ideal:1920},height:{ideal:1080},...(id?{deviceId:{exact:id}}:{})},
+    id ? {deviceId:{exact:id}} : true,
+    true
+  ];
+  let last;
+  for(const v of tries){
+    try{ return await navigator.mediaDevices.getUserMedia({video:v,audio:false}); }
+    catch(e){ last=e; if(e.name==='NotAllowedError' || e.name==='SecurityError') break; }
+  }
+  throw last;
+}
+async function start(){
+  showErr('');
+  if(!navigator.mediaDevices?.getUserMedia){ showErr('Este navegador no permite usar la cámara aquí. Abrí la página por https:// o localhost, en Chrome o Edge.'); return; }
+  stop();
+  setStatus('Abriendo cámara…');
+  try{
+    stream = await openCamera($('camSel').value);
+    video.srcObject=stream;
+    try{ await video.play(); }catch(e){ /* algunos navegadores reproducen igual al tener muted */ }
+    $('stage').classList.add('live'); running=true; $('startBtn').textContent='Detener cámara';
+    const track=stream.getVideoTracks()[0], st=track.getSettings();
+    setStatus(`Escaneando · ${st.width||'?'}×${st.height||'?'}`, true);
+    loop();                                   // primero escanear…
+    listCams();
+    setupTrackControls(track).catch(e=>console.warn('Controles de cámara no disponibles', e)); // …y el foco después, sin bloquear
+  }catch(e){
+    const m = e.name==='NotAllowedError' ? 'Permiso de cámara denegado. Habilitalo desde el candado de la barra de direcciones y recargá.'
+            : e.name==='NotFoundError' ? 'No se encontró ninguna cámara conectada.'
+            : e.name==='NotReadableError' ? 'La cámara está en uso por otra aplicación o por otra pestaña (Zoom, Teams, otra copia de esta página). Cerrala y probá de nuevo.'
+            : e.name==='OverconstrainedError' ? 'La cámara elegida ya no está disponible. Elegí "Cámara predeterminada".'
+            : 'No se pudo iniciar la cámara: '+(e.name||'')+' '+(e.message||e);
+    showErr(m); setStatus('Cámara apagada');
+  }
+}
+function stop(){
+  running=false;
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  video.srcObject=null; $('stage').classList.remove('live'); $('startBtn').textContent='Iniciar cámara';
+  ctxO.clearRect(0,0,overlay.width,overlay.height); setStatus('Cámara apagada'); hintBad(false); $('rate').textContent=''; $('camTools').hidden=true;
+}
+$('startBtn').onclick = ()=> running ? stop() : start();
+$('camSel').onchange = ()=>{ if(running) start(); };
+$('mirror').onchange = ()=>{ video.style.transform = $('mirror').checked ? 'scaleX(-1)' : ''; };
+
+// ---- Desde imagen ----
+$('fileIn').onchange = async e=>{
+  showErr('');
+  for(const f of e.target.files){
+    try{
+      let res = await ZXingWASM.readBarcodes(f, opts());
+      const ok = res.filter(r=>r.isValid);
+      if(!ok.length) res = await ZXingWASM.readBarcodes(f, opts({returnErrors:true}));
+      if(!ok.length) showErr(res.length ? `Se detectó un código en "${f.name}" pero está dañado o mal impreso y no se pudo decodificar.` : `No se encontró ningún código en "${f.name}".`);
+      ok.forEach(r=>{ lastSeen.delete(r.text); addResult(r); });
+    }catch(err){ showErr('Error leyendo la imagen: '+err.message); }
+  }
+  e.target.value='';
+};
+
+// ---- Inicio ----
+if(typeof ZXingWASM==='undefined'){
+  setStatus('Sin lector'); showErr('No se pudo cargar la librería de lectura (zxing-wasm). Revisá la conexión a internet.');
+}else{
+  ZXingWASM.prepareZXingModule({fireImmediately:true})
+    .then(()=>setStatus('Listo · cámara apagada'))
+    .catch(()=>{ setStatus('Sin lector'); showErr('No se pudo cargar el módulo WASM del lector.'); });
+  listCams();
+}
+}
+</script>
+</body>
+</html>
