@@ -72,6 +72,13 @@ textarea{width:100%;min-height:70px;resize:vertical;font:14px/1.45 "IBM Plex Mon
 .link{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;border-radius:8px;background:var(--soft);font-size:14px}
 .link a{color:var(--acc);font-weight:600;word-break:break-all}
 .err{color:var(--warn);font-size:14px;margin:0}
+.scanner{display:grid;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
+.scanner .top{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:14px}
+.scanner .top b{font-weight:600}
+.scanner .dot.on{animation:pulse 1.2s ease-out}
+@keyframes pulse{from{box-shadow:0 0 0 8px color-mix(in srgb,var(--acc) 45%,transparent)}to{box-shadow:0 0 0 0 transparent}}
+.scanner select{flex:0 1 auto;min-height:34px;font-size:13px}
+.scanner textarea{min-height:44px}
 .ver{text-align:center;font-size:13px;color:var(--muted);padding:6px 16px 20px}
 @media(max-width:560px){td.lbl{display:none}}
 </style>
@@ -100,6 +107,16 @@ textarea{width:100%;min-height:70px;resize:vertical;font:14px/1.45 "IBM Plex Mon
       <label class="chk"><input type="checkbox" id="beep" checked> Sonido al leer</label>
       <label class="chk"><input type="checkbox" id="mirror"> Espejar vista</label>
     </div>
+    <div class="scanner">
+      <div class="top"><span class="dot on" id="scDot"></span><b>Lectora USB</b>
+        <span id="scSt" class="hint">lista · escaneá en cualquier momento</span>
+        <label class="chk" style="margin-left:auto">Separador
+          <select id="scSep" aria-label="Separador GS de la lectora">
+            <option value="">GS (estándar)</option><option value="|">|</option><option value="^">^</option><option value="~">~</option>
+          </select></label></div>
+      <textarea id="scIn" placeholder="También podés pegar acá el texto de un código y tocar Procesar"></textarea>
+      <div class="row"><button id="scGo" type="button">Procesar</button></div>
+    </div>
     <p class="hint">Consejo: buena luz, sin reflejos y el código ocupando ~1/3 de la imagen. Si la webcam no enfoca de cerca, alejalo un poco.</p>
     <p class="err" id="err" hidden></p>
   </section>
@@ -114,7 +131,7 @@ textarea{width:100%;min-height:70px;resize:vertical;font:14px/1.45 "IBM Plex Mon
     <div class="list" id="list"><div class="none">Todavía no se leyó ningún código.</div></div>
   </section>
 </main>
-<footer class="ver">Lector Data Matrix · v1.1 · 18/11/2026</footer>
+<footer class="ver">Lector Data Matrix · v1.2 · 18/11/2026</footer>
 
 <script src="https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/iife/reader/index.js"></script>
 <script>
@@ -342,6 +359,78 @@ $('fileIn').onchange = async e=>{
   }
   e.target.value='';
 };
+
+// ---- Lectora USB (modo teclado / HID) ----
+// La lectora "tipea" muy rápido (< 35 ms entre teclas). Se arma el texto con esas teclas
+// y se procesa cuando hay una pausa, así los saltos de línea dentro del código no lo cortan.
+const GS='\x1d';
+function gs1RawToFields(raw){
+  let s=raw.replace(/^\](d2|C1|Q3|e0)/,'').replace(/^\x1d+/,'');
+  const out=[]; let i=0;
+  const fixed2={'00':18,'01':14,'02':14,'03':14,'04':16,'11':6,'12':6,'13':6,'15':6,'16':6,'17':6,'20':2};
+  while(i<s.length){
+    const p=s.slice(i,i+2); if(!/^\d\d$/.test(p)) return null;
+    let ai, n=null;
+    if(fixed2[p]){ ai=p; n=fixed2[p]; }
+    else if(/^3[1-6]$/.test(p)){ ai=s.slice(i,i+4); n=6; }
+    else if(p==='41'){ ai=s.slice(i,i+3); n=13; }
+    else if(['10','21','22','30','37'].includes(p) || /^9\d$/.test(p)){ ai=p; }
+    else if(/^(2[3-5]|4[0-3])$/.test(p)){ ai=s.slice(i,i+3); }
+    else if(/^[78]\d$/.test(p)){ ai=s.slice(i,i+4); if(ai==='7003') n=10; }
+    else return null;
+    if(!/^\d+$/.test(ai)) return null;
+    i+=ai.length;
+    let v;
+    if(n){ v=s.slice(i,i+n); i+=n; if(s[i]===GS) i++; }
+    else { const e=s.indexOf(GS,i); v= e<0 ? s.slice(i) : s.slice(i,e); i= e<0 ? s.length : e+1; }
+    out.push({ai, value:v});
+  }
+  return out.length ? out : null;
+}
+function handleScanned(text){
+  const sep=$('scSep').value;
+  if(sep) text=text.split(sep).join(GS);
+  text=text.replace(/\r\n?/g,'\n').replace(/\n+$/,'');
+  if(!text.trim()) return;
+  if(/^\)\d\d=/.test(text)) showErr('La lectora parece estar configurada con otra distribución de teclado (los paréntesis llegan como ")" y "="). Configurala en "Latinoamérica" o igual que Windows.');
+  else showErr('');
+  let hri=text, gs1=false;
+  // Formato GS1 crudo (sin paréntesis): se convierte a "(01)...(21)..."
+  if(!/^\(\d{2,4}\)/.test(text)){
+    const f = gs1RawToFields(text);
+    if(f && (text.includes(GS) || /^\]d2/.test(text) || /^0[01]\d{14}/.test(text))){ hri=f.map(x=>`(${x.ai})${x.value}`).join(''); gs1=true; }
+  }
+  lastSeen.delete(hri);
+  addResult({text:hri, bytes:new TextEncoder().encode(text), format:'Lectora', contentType: gs1?'GS1':''});
+  $('scSt').textContent='último escaneo '+new Date().toLocaleTimeString('es-AR');
+  $('scDot').classList.remove('on'); void $('scDot').offsetWidth; $('scDot').classList.add('on');
+}
+let kb='', kbN=0, kbStart=0, kbLast=0, kbTimer=null;
+document.addEventListener('keydown', e=>{
+  const t=e.target, tag=(t.tagName||'').toLowerCase();
+  if((tag==='input'||tag==='textarea'||tag==='select') && t.id!=='scIn') return; // no interferir con otros campos
+  const now=performance.now();
+  if(now-kbLast>100){ kb=''; kbN=0; kbStart=now; }
+  let ch=null;
+  if(e.key==='Enter') ch='\n';
+  else if(e.key==='Tab') ch='\n';
+  else if(e.ctrlKey && (e.key===']'||e.code==='BracketRight')) ch=GS;   // GS que mandan muchas lectoras
+  else if(e.key && e.key.length===1 && !e.ctrlKey && !e.altKey && !e.metaKey) ch=e.key;
+  if(ch===null) return;
+  kb+=ch; kbN++; kbLast=now;
+  const fast = kbN>=4 && (now-kbStart)/(kbN-1) < 35;
+  if(fast && t.id!=='scIn'){ e.preventDefault(); }
+  clearTimeout(kbTimer);
+  kbTimer=setTimeout(()=>{
+    const isScan = kbN>=4 && (kbLast-kbStart)/Math.max(1,kbN-1) < 35;
+    if(isScan){
+      if(t.id==='scIn') $('scIn').value='';
+      handleScanned(kb);
+    }
+    kb=''; kbN=0;
+  }, 120);
+}, true);
+$('scGo').onclick=()=>{ handleScanned($('scIn').value); $('scIn').value=''; };
 
 // ---- Inicio ----
 if(typeof ZXingWASM==='undefined'){
